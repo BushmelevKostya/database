@@ -1,0 +1,153 @@
+@startuml columnar-db-class-diagram
+' Render this file with: https://www.plantuml.com/plantuml (paste text),
+' IntelliJ "PlantUML integration" plugin, VS Code "PlantUML" extension,
+' or draw.io (Extras -> Edit Diagram... and paste the PlantUML text).
+
+skinparam classAttributeIconSize 0
+hide empty members
+left to right direction
+
+title Колоночная БД — Лабораторная 1\nинтерфейсы (базовый функционал)
+
+package "core" {
+  interface Database {
+    +createTable(name, schema): Table
+    +getTable(name): Table?
+    +dropTable(name): Boolean
+    +listTables(): List<String>
+  }
+
+  interface Table {
+    +name: String
+    +schema: Schema
+    +insert(row): Long
+    +get(rowId): Row?
+    +scan(): Sequence<Row>
+    +filter(predicate): Sequence<Row>
+    +sort(specs): Sequence<Row>
+    +aggregate(spec): AggregateResult
+  }
+
+  interface "Column<T>" as Column {
+    +name: String
+    +type: DataType
+    +size: Long
+    +get(rowIndex): T?
+    +append(value)
+  }
+
+  class Schema <<data>> {
+    +columns: List<ColumnDefinition>
+  }
+  class ColumnDefinition <<data>> {
+    +name: String
+    +type: DataType
+    +nullable: Boolean
+  }
+  class Row <<data>> {
+    +values: Map<String, Any?>
+  }
+  enum DataType {
+    INT
+    LONG
+    DOUBLE
+    STRING
+    BOOLEAN
+  }
+}
+
+package "query" {
+  interface Predicate {
+    +test(row): Boolean
+  }
+  class SortSpec <<data>> {
+    +columnName: String
+    +ascending: Boolean
+  }
+  enum AggregateFunction {
+    COUNT
+    SUM
+    AVG
+    MIN
+    MAX
+  }
+  class AggregateSpec <<data>> {
+    +columnName: String
+    +function: AggregateFunction
+    +groupBy: String?
+  }
+  class AggregateResult <<data>> {
+    +value: Any?
+    +groups: Map<Any?, Any?>
+  }
+}
+
+package "storage" {
+  interface StorageEngine {
+    +writeColumn(tableName, column)
+    +readColumn(tableName, columnName): Column<*>?
+    +load(tableName): Schema?
+    +flush()
+  }
+}
+
+package "cache" {
+  interface CacheManager {
+    +loadColumn(tableName, columnName): Column<*>
+    +evictColumn(tableName, columnName)
+    +isCached(tableName, columnName): Boolean
+  }
+}
+
+package "compression" {
+  interface ColumnCompressor {
+    +compress(column): CompressedColumn
+    +decompress(compressed): Column<*>
+  }
+  class CompressedColumn <<data>> {
+    +name: String
+    +type: DataType
+    +data: ByteArray
+    +originalSize: Long
+  }
+}
+
+package "replication" {
+  enum NodeRole {
+    MASTER
+    REPLICA
+  }
+  interface Node {
+    +id: String
+    +role: NodeRole
+    +database: Database
+  }
+  interface ReplicationManager {
+    +role: NodeRole
+    +registerReplica(node)
+    +propagate(tableName, row)
+    +promoteToMaster()
+  }
+}
+
+Database "1" o-- "many" Table
+Table --> Schema
+Table ..> Row : produces
+Table ..> Predicate : filter()
+Table ..> SortSpec : sort()
+Table ..> AggregateSpec : aggregate()
+Table ..> AggregateResult : aggregate()
+Table --> Column
+Schema --> ColumnDefinition
+ColumnDefinition --> DataType
+Column --> DataType
+Table ..> StorageEngine : persists via
+Table ..> CacheManager : reads/evicts via
+StorageEngine ..> ColumnCompressor : compress/decompress
+ColumnCompressor --> CompressedColumn
+Node --> Database
+Node --> NodeRole
+ReplicationManager --> NodeRole
+ReplicationManager ..> Node : registers/propagates
+
+@enduml
