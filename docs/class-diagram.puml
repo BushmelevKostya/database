@@ -7,7 +7,7 @@ skinparam classAttributeIconSize 0
 hide empty members
 left to right direction
 
-title Колоночная БД — Лабораторная 1\nинтерфейсы (базовый функционал)
+title Колоночная БД — Лабораторные 1–2\nинтерфейсы и их реализации (репликация — только интерфейсы)
 
 package "core" {
   interface Database {
@@ -15,6 +15,19 @@ package "core" {
     +getTable(name): Table?
     +dropTable(name): Boolean
     +listTables(): List<String>
+    +flush()
+    +close()
+  }
+
+  class ColumnarDatabase {
+    +open(directory, cacheBytes): ColumnarDatabase
+  }
+  class ColumnarTable <<internal>>
+  class "InMemoryColumn<T>" as InMemoryColumn
+  class ColumnBlock {
+    +type: DataType
+    +rows: Int
+    +get(index): Any?
   }
 
   interface Table {
@@ -84,29 +97,45 @@ package "query" {
 
 package "storage" {
   interface StorageEngine {
-    +writeColumn(tableName, column)
-    +readColumn(tableName, columnName): Column<*>?
+    +blockRows: Int
+    +blockCount(tableName, columnName): Int
+    +appendBlock(tableName, columnName, block)
+    +readBlock(tableName, columnName, index): ColumnBlock
+    +truncateBlocks(tableName, columnName, count)
+    +readLog(tableName): TableLog?
+    +appendLog(tableName, rows)
+    +resetLog(tableName, firstRow, rows)
+    +writeSchema(tableName, schema)
     +load(tableName): Schema?
+    +listTables(): List<String>
+    +deleteTable(tableName)
     +flush()
+  }
+  class FileStorageEngine
+  class TableLog <<data>> {
+    +firstRow: Long
+    +rows: List<List<Any?>>
   }
 }
 
 package "cache" {
   interface CacheManager {
-    +loadColumn(tableName, columnName): Column<*>
-    +evictColumn(tableName, columnName)
-    +isCached(tableName, columnName): Boolean
+    +loadBlock(tableName, columnName, blockIndex): ColumnBlock
+    +deleteTable(tableName)
+    +isCached(tableName, columnName, blockIndex): Boolean
   }
+  class LruCacheManager
 }
 
 package "compression" {
   interface ColumnCompressor {
-    +compress(column): CompressedColumn
-    +decompress(compressed): Column<*>
+    +compress(block): CompressedBlock
+    +decompress(compressed): ColumnBlock
   }
-  class CompressedColumn <<data>> {
-    +name: String
+  class DeflateColumnCompressor
+  class CompressedBlock <<data>> {
     +type: DataType
+    +rows: Int
     +data: ByteArray
     +originalSize: Long
   }
@@ -141,13 +170,27 @@ Table --> Column
 Schema --> ColumnDefinition
 ColumnDefinition --> DataType
 Column --> DataType
-Table ..> StorageEngine : persists via
-Table ..> CacheManager : reads/evicts via
+Table ..> StorageEngine : log + append blocks
+Table ..> CacheManager : reads blocks via
 StorageEngine ..> ColumnCompressor : compress/decompress
-ColumnCompressor --> CompressedColumn
+StorageEngine --> ColumnBlock
+StorageEngine --> TableLog
+CacheManager --> ColumnBlock
+ColumnCompressor --> CompressedBlock
+ColumnCompressor --> ColumnBlock
 Node --> Database
 Node --> NodeRole
 ReplicationManager --> NodeRole
 ReplicationManager ..> Node : registers/propagates
+
+ColumnarDatabase ..|> Database
+ColumnarDatabase o-- ColumnarTable
+ColumnarTable ..|> Table
+InMemoryColumn ..|> Column
+FileStorageEngine ..|> StorageEngine
+FileStorageEngine --> ColumnCompressor
+LruCacheManager ..|> CacheManager
+LruCacheManager --> StorageEngine
+DeflateColumnCompressor ..|> ColumnCompressor
 
 @enduml

@@ -1,8 +1,8 @@
 package org.itmo.db.compression
 
-import org.itmo.db.core.Column
+import org.itmo.db.core.ColumnBlock
 
 interface ColumnCompressor {
-    fun compress(column: Column<*>): CompressedColumn
-    fun decompress(compressed: CompressedColumn): Column<*>
+    fun compress(block: ColumnBlock): CompressedBlock
+    fun decompress(compressed: CompressedBlock): ColumnBlock
 }

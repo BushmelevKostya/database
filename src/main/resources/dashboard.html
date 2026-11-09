@@ -1,0 +1,452 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Columnar DB — дашборд</title>
+<style>
+:root {
+  --bg: #f4f6f9; --card: #ffffff; --text: #1b2430; --muted: #6a7587; --border: #e2e6ec; --grid: #e9edf2;
+  --insert: #2f6fed; --get: #16a34a; --query: #e8890c; --flush: #8b5cf6; --bad: #dc2626; --heap: #0891b2;
+  --bar-raw: #cfd6df; --bar-disk: #2f6fed; --ok: #16a34a;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0e1319; --card: #161d26; --text: #e6ebf2; --muted: #8b97a8; --border: #263040; --grid: #222c39;
+    --bar-raw: #3a4657; --insert: #5b93ff; --get: #34d399; --query: #f5a623; --flush: #a78bfa; --bad: #f87171; --heap: #22c3e6;
+    --bar-disk: #5b93ff;
+  }
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--bg); color: var(--text);
+  font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+header {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 24px;
+  padding: 14px 20px; border-bottom: 1px solid var(--border); background: var(--card);
+}
+h1 { font-size: 18px; margin: 0; }
+h2 { font-size: 13px; font-weight: 600; margin: 0; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+.title { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 16px; }
+.phase { color: var(--muted); }
+.meta { display: flex; align-items: center; gap: 16px; color: var(--muted); }
+.status { display: inline-flex; align-items: center; gap: 6px; }
+.status i { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); }
+.status.live i { background: var(--ok); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 25%, transparent); }
+.status.off i { background: var(--bad); }
+main { max-width: 1280px; margin: 0 auto; padding: 16px 20px 40px; display: grid; gap: 16px; }
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; }
+.tile, .card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; }
+.tile { padding: 12px 14px; }
+.tile .label { color: var(--muted); font-size: 12px; }
+.tile .value { font-size: 24px; font-weight: 650; margin: 2px 0; font-variant-numeric: tabular-nums; }
+.tile .sub { color: var(--muted); font-size: 12px; }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); gap: 16px; }
+.card { padding: 14px 16px; min-width: 0; }
+.card-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 8px; }
+.legend { display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: 12px; color: var(--muted); margin-bottom: 6px; min-height: 18px; }
+.legend b { color: var(--text); font-variant-numeric: tabular-nums; font-weight: 600; }
+.chip { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
+.plot { position: relative; height: 210px; }
+canvas { display: block; }
+.seg { display: inline-flex; flex-wrap: wrap; gap: 4px; }
+.seg button, .toggle {
+  font: inherit; font-size: 12px; color: var(--muted); background: transparent; cursor: pointer;
+  border: 1px solid var(--border); border-radius: 6px; padding: 2px 8px;
+}
+.seg button.active { color: var(--text); border-color: var(--muted); background: color-mix(in srgb, var(--muted) 14%, transparent); }
+.toggle { display: inline-flex; align-items: center; gap: 6px; }
+.tip {
+  position: fixed; z-index: 10; pointer-events: none; background: var(--text); color: var(--bg);
+  border-radius: 6px; padding: 6px 9px; font-size: 12px; white-space: nowrap; line-height: 1.5;
+}
+table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+th, td { text-align: right; padding: 6px 10px; border-bottom: 1px solid var(--border); }
+th:first-child, td:first-child { text-align: left; }
+th { color: var(--muted); font-weight: 500; font-size: 12px; }
+tr:last-child td { border-bottom: 0; }
+.table-title { display: flex; flex-wrap: wrap; gap: 4px 14px; align-items: baseline; margin: 10px 0 8px; }
+.table-title strong { font-size: 15px; }
+.table-title span { color: var(--muted); }
+.col { display: grid; grid-template-columns: 150px 1fr 190px; gap: 12px; align-items: center; padding: 3px 0; }
+.col .name small { color: var(--muted); margin-left: 6px; }
+.bar { position: relative; height: 10px; border-radius: 5px; background: color-mix(in srgb, var(--muted) 10%, transparent); overflow: hidden; }
+.bar .raw, .bar .disk { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 5px; }
+.bar .raw { background: var(--bar-raw); }
+.bar .disk { background: var(--bar-disk); }
+.col .size { color: var(--muted); text-align: right; font-variant-numeric: tabular-nums; font-size: 12px; }
+.col .size b { color: var(--text); font-weight: 600; }
+.note { color: var(--muted); font-size: 12px; margin-top: 8px; }
+@media (max-width: 560px) {
+  .grid { grid-template-columns: 1fr; }
+  .col { grid-template-columns: 1fr; gap: 2px; }
+  .col .size { text-align: left; }
+}
+</style>
+</head>
+<body>
+<header>
+  <div class="title"><h1>Columnar DB</h1><span class="phase" id="phase">Подключение…</span></div>
+  <div class="meta">
+    <span id="uptime"></span>
+    <span class="status" id="status"><i></i><span>подключение</span></span>
+  </div>
+</header>
+<main>
+  <section class="tiles" id="tiles"></section>
+
+  <section class="grid">
+    <article class="card">
+      <div class="card-head"><h2>Пропускная способность</h2>
+        <label class="toggle"><input type="checkbox" id="log-throughput"> лог. шкала</label></div>
+      <div class="legend" id="lg-throughput"></div>
+      <div class="plot"><canvas id="c-throughput"></canvas></div>
+    </article>
+    <article class="card">
+      <div class="card-head"><h2>Задержка (лог. шкала)</h2><div class="seg" id="op-seg"></div></div>
+      <div class="legend" id="lg-latency"></div>
+      <div class="plot"><canvas id="c-latency"></canvas></div>
+    </article>
+    <article class="card">
+      <div class="card-head"><h2>Кэш блоков</h2></div>
+      <div class="legend" id="lg-cache"></div>
+      <div class="plot"><canvas id="c-cache"></canvas></div>
+    </article>
+    <article class="card">
+      <div class="card-head"><h2>Строк в таблицах</h2></div>
+      <div class="legend" id="lg-rows"></div>
+      <div class="plot"><canvas id="c-rows"></canvas></div>
+    </article>
+    <article class="card">
+      <div class="card-head"><h2>Размер на диске</h2></div>
+      <div class="legend" id="lg-disk"></div>
+      <div class="plot"><canvas id="c-disk"></canvas></div>
+    </article>
+    <article class="card">
+      <div class="card-head"><h2>Память JVM</h2></div>
+      <div class="legend" id="lg-heap"></div>
+      <div class="plot"><canvas id="c-heap"></canvas></div>
+    </article>
+  </section>
+
+  <section class="card">
+    <div class="card-head"><h2>Хранение: как лежат данные</h2></div>
+    <div id="tables-body"></div>
+    <div class="note">Серая полоса — данные колонки до сжатия, цветная — файл на диске. Значения обновляются после каждого flush.</div>
+  </section>
+
+  <section class="card">
+    <div class="card-head"><h2>Операции</h2></div>
+    <table id="ops"></table>
+    <div class="note">«Сейчас» и процентили — за последнюю секунду. Для scan, filter и sort задержка — время от вызова до конца обхода.</div>
+  </section>
+</main>
+<div class="tip" id="tip" hidden></div>
+
+<script>
+'use strict';
+const OPS = ['INSERT', 'GET', 'SCAN', 'FILTER', 'SORT', 'AGGREGATE', 'FLUSH'];
+const QUERY_OPS = ['SCAN', 'FILTER', 'SORT', 'AGGREGATE'];
+const OP_COLOR = { INSERT: '--insert', GET: '--get', SCAN: '--query', FILTER: '--query', SORT: '--query', AGGREGATE: '--query', FLUSH: '--flush' };
+const WINDOW = 120;
+const $ = id => document.getElementById(id);
+const css = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+
+const fmt = {
+  int: n => Math.round(n).toLocaleString('ru-RU'),
+  rate: n => n >= 1e6 ? (n / 1e6).toFixed(2) + ' млн/с' : n >= 1e3 ? (n / 1e3).toFixed(1) + ' тыс/с' : n.toFixed(n < 10 ? 1 : 0) + '/с',
+  bytes: n => n < 1024 ? Math.round(n) + ' Б' : n < 1048576 ? (n / 1024).toFixed(1) + ' КБ' : n < 1073741824 ? (n / 1048576).toFixed(1) + ' МБ' : (n / 1073741824).toFixed(2) + ' ГБ',
+  dur: ns => ns <= 0 ? '—' : ns < 1e3 ? Math.round(ns) + ' нс' : ns < 1e6 ? (ns / 1e3).toFixed(ns < 1e4 ? 1 : 0) + ' мкс' : ns < 1e9 ? (ns / 1e6).toFixed(ns < 1e7 ? 1 : 0) + ' мс' : (ns / 1e9).toFixed(2) + ' с',
+  count: n => n >= 1e9 ? (n / 1e9).toFixed(1) + ' млрд' : n >= 1e6 ? (n / 1e6).toFixed(n < 1e7 ? 2 : 1) + ' млн' : n >= 1e3 ? (n / 1e3).toFixed(n < 1e4 ? 1 : 0) + ' тыс' : String(Math.round(n)),
+  pct: x => (x * 100).toFixed(x < 0.1 ? 1 : 0) + '%',
+  clock: ms => new Date(ms).toLocaleTimeString('ru-RU'),
+  span: s => { s = Math.floor(s); const m = Math.floor(s / 60); return m >= 60 ? Math.floor(m / 60) + ' ч ' + (m % 60) + ' мин' : m ? m + ' мин ' + (s % 60) + ' с' : s + ' с'; }
+};
+
+let history = [];
+let since = 0;
+let startedAt = null;
+let latest = null;
+let lastOk = 0;
+let latencyOp = 'INSERT';
+
+// ---------- графики ----------
+
+function niceMax(v) {
+  if (v <= 0) return 1;
+  const p = Math.pow(10, Math.floor(Math.log10(v)));
+  const f = v / p;
+  return (f <= 1 ? 1 : f <= 2 ? 2 : f <= 2.5 ? 2.5 : f <= 5 ? 5 : 10) * p;
+}
+
+/** series: [{name, color, values, format}], xs — метки времени; log — логарифмическая ось Y. */
+function drawChart(id, args) {
+  const canvas = $(id);
+  canvas._args = args;
+  const { series, xs, log, format } = args;
+  const box = canvas.parentElement;
+  const w = box.clientWidth, h = box.clientHeight, dpr = window.devicePixelRatio || 1;
+  canvas.width = w * dpr; canvas.height = h * dpr;
+  canvas.style.width = w + 'px'; canvas.style.height = h + 'px';
+  const g = canvas.getContext('2d');
+  g.scale(dpr, dpr);
+  g.font = '11px -apple-system, "Segoe UI", sans-serif';
+  const L = 58, R = 10, T = 8, B = 22, pw = w - L - R, ph = h - T - B;
+  const text = css('--muted'), grid = css('--grid');
+  const n = xs.length;
+  const all = series.flatMap(s => s.values).filter(v => v != null && isFinite(v));
+
+  let yOf, ticks;
+  if (log) {
+    const pos = all.filter(v => v > 0);
+    let lo = pos.length ? Math.floor(Math.log10(Math.min(...pos))) : 0;
+    let hi = pos.length ? Math.ceil(Math.log10(Math.max(...pos))) : 1;
+    if (hi <= lo) hi = lo + 1;
+    const step = Math.max(1, Math.ceil((hi - lo) / 5));
+    ticks = []; for (let d = lo; d <= hi; d += step) ticks.push(Math.pow(10, d));
+    const top = Math.pow(10, hi), bottom = Math.pow(10, lo);
+    yOf = v => T + ph - (Math.log10(v) - Math.log10(bottom)) / (Math.log10(top) - Math.log10(bottom)) * ph;
+  } else {
+    const max = niceMax(all.length ? Math.max(...all) : 1);
+    ticks = [0, 1, 2, 3, 4].map(i => max * i / 4);
+    yOf = v => T + ph - v / max * ph;
+  }
+  const xOf = i => L + (n <= 1 ? pw : i / (n - 1) * pw);
+
+  g.strokeStyle = grid; g.fillStyle = text; g.lineWidth = 1; g.textAlign = 'right'; g.textBaseline = 'middle';
+  for (const t of ticks) {
+    const y = Math.round(yOf(Math.max(t, log ? t : 0))) + 0.5;
+    g.beginPath(); g.moveTo(L, y); g.lineTo(w - R, y); g.stroke();
+    g.fillText(format(t), L - 6, y);
+  }
+  g.textBaseline = 'top';
+  if (n > 1) {
+    const total = Math.round((xs[n - 1] - xs[0]) / 1000);
+    g.textAlign = 'left'; g.fillText('−' + total + ' с', L, h - B + 6);
+    g.textAlign = 'center'; g.fillText('−' + Math.round(total / 2) + ' с', L + pw / 2, h - B + 6);
+    g.textAlign = 'right'; g.fillText('сейчас', w - R, h - B + 6);
+  } else {
+    g.textAlign = 'left'; g.fillText('ждём данные…', L, h - B + 6);
+  }
+
+  g.lineWidth = 2; g.lineJoin = 'round'; g.lineCap = 'round';
+  for (const s of series) {
+    g.strokeStyle = g.fillStyle = s.color;
+    g.beginPath();
+    let pen = false;
+    s.values.forEach((v, i) => {
+      if (v == null || !isFinite(v) || (log && v <= 0)) { pen = false; return; }
+      const x = xOf(i), y = yOf(v);
+      if (!pen) { g.moveTo(x, y); pen = true; } else g.lineTo(x, y);
+    });
+    g.stroke();
+    if (n === 1 && s.values[0] != null) { g.beginPath(); g.arc(xOf(0), yOf(s.values[0]), 3, 0, 7); g.fill(); }
+  }
+
+  const hover = canvas._hover;
+  if (hover != null && hover < n) {
+    const x = Math.round(xOf(hover)) + 0.5;
+    g.strokeStyle = text; g.lineWidth = 1;
+    g.beginPath(); g.moveTo(x, T); g.lineTo(x, T + ph); g.stroke();
+    for (const s of series) {
+      const v = s.values[hover];
+      if (v == null || !isFinite(v) || (log && v <= 0)) continue;
+      g.fillStyle = s.color; g.beginPath(); g.arc(x, yOf(v), 3.5, 0, 7); g.fill();
+    }
+    const tip = $('tip');
+    tip.hidden = false;
+    tip.innerHTML = '<b>' + fmt.clock(xs[hover]) + '</b><br>' + series.map(s =>
+      '<span style="color:' + s.color + '">●</span> ' + s.name + ': ' + (s.values[hover] == null ? '—' : (s.format || format)(s.values[hover]))).join('<br>');
+    const rect = canvas.getBoundingClientRect();
+    const tx = rect.left + x + 14;
+    tip.style.left = Math.min(tx, window.innerWidth - tip.offsetWidth - 8) + 'px';
+    tip.style.top = Math.max(8, canvas._mouseY - tip.offsetHeight - 10) + 'px';
+  }
+}
+
+function attachHover(id) {
+  const canvas = $(id);
+  canvas.addEventListener('mousemove', e => {
+    const a = canvas._args;
+    if (!a || a.xs.length === 0) return;
+    const rect = canvas.getBoundingClientRect();
+    const L = 58, R = 10, pw = rect.width - L - R, n = a.xs.length;
+    const i = n <= 1 ? 0 : Math.round((e.clientX - rect.left - L) / pw * (n - 1));
+    canvas._hover = Math.max(0, Math.min(n - 1, i));
+    canvas._mouseY = e.clientY;
+    drawChart(id, a);
+  });
+  canvas.addEventListener('mouseleave', () => {
+    canvas._hover = null;
+    $('tip').hidden = true;
+    if (canvas._args) drawChart(id, canvas._args);
+  });
+}
+
+function legend(id, items) {
+  $(id).innerHTML = items.map(i => '<span><span class="chip" style="background:' + i.color + '"></span>' + i.name + ' <b>' + i.value + '</b></span>').join('');
+}
+
+// ---------- отрисовка страницы ----------
+
+function render() {
+  const s = latest;
+  if (!s) return;
+  $('phase').textContent = s.phase;
+  $('uptime').textContent = 'работает ' + fmt.span((s.serverTime - s.startedAt) / 1000);
+
+  const h = history.slice(-WINDOW);
+  const xs = h.map(p => p.t);
+  const last = h[h.length - 1];
+  const prev = h.length > 1 ? h[h.length - 2] : null;
+  const col = name => css(name);
+
+  const rate = op => h.map(p => p.ops[op].rate);
+  const lastRate = op => last ? last.ops[op].rate : 0;
+  const lastQueries = QUERY_OPS.reduce((sum, op) => sum + lastRate(op), 0);
+  const queryRate = h.map(p => QUERY_OPS.reduce((sum, op) => sum + p.ops[op].rate, 0));
+
+  // плитки
+  const tables = s.tables || [];
+  const cols = tables.flatMap(t => t.columns);
+  const disk = cols.reduce((a, c) => a + c.diskBytes, 0), raw = cols.reduce((a, c) => a + c.rawBytes, 0);
+  const hits = s.cache.hits, misses = s.cache.misses;
+  const ratio = hits + misses ? hits / (hits + misses) : null;
+  const heap = last ? last.heap : 0;
+  const tiles = [
+    ['Строк', last ? fmt.int(last.rows) : '—', tables.length + ' ' + (tables.length === 1 ? 'таблица' : 'таблиц(ы)')],
+    ['На диске', fmt.bytes(disk), raw && disk ? 'сжатие ×' + (raw / disk).toFixed(2) : 'файлов ещё нет'],
+    ['Вставки', fmt.rate(lastRate('INSERT')), last ? 'p99 ' + fmt.dur(last.ops.INSERT.p99) : ''],
+    ['Чтения get', fmt.rate(lastRate('GET')), last ? 'p99 ' + fmt.dur(last.ops.GET.p99) : ''],
+    ['Попадания в кэш', ratio == null ? '—' : fmt.pct(ratio), fmt.int(misses) + ' промахов, ' + fmt.int(s.cache.evictions) + ' вытеснений'],
+    ['Куча JVM', fmt.bytes(heap), 'из ' + fmt.bytes(s.jvm.heapMax) + (last && last.cpu >= 0 ? ', CPU ' + fmt.pct(last.cpu) : '')]
+  ];
+  $('tiles').innerHTML = tiles.map(t => '<div class="tile"><div class="label">' + t[0] + '</div><div class="value">' + t[1] + '</div><div class="sub">' + (t[2] || '&nbsp;') + '</div></div>').join('');
+
+  // пропускная способность
+  const logT = $('log-throughput').checked;
+  const throughput = [
+    { name: 'insert', color: col('--insert'), values: rate('INSERT') },
+    { name: 'get', color: col('--get'), values: rate('GET') },
+    { name: 'запросы', color: col('--query'), values: queryRate }
+  ];
+  drawChart('c-throughput', { series: throughput, xs, log: logT, format: v => fmt.rate(v).replace('/с', '') });
+  legend('lg-throughput', throughput.map((s, i) => ({ name: s.name, color: s.color, value: fmt.rate([lastRate('INSERT'), lastRate('GET'), lastQueries][i]) })));
+
+  // задержка; flush идёт редко, поэтому для него показываем длительность последнего сброса
+  const op = latencyOp;
+  const lat = op === 'FLUSH'
+    ? [{ name: 'длительность flush', color: col('--flush'), values: h.map(p => p.ops.FLUSH.last) }]
+    : [
+      { name: 'p50', color: col(OP_COLOR[op]), values: h.map(p => p.ops[op].p50) },
+      { name: 'p99', color: col('--bad'), values: h.map(p => p.ops[op].p99) }
+    ];
+  drawChart('c-latency', { series: lat, xs, log: true, format: fmt.dur });
+  legend('lg-latency', op === 'FLUSH'
+    ? [{ name: 'последний flush', color: lat[0].color, value: last ? fmt.dur(last.ops.FLUSH.last) : '—' }]
+    : [
+      { name: op.toLowerCase() + ' p50', color: lat[0].color, value: last ? fmt.dur(last.ops[op].p50) : '—' },
+      { name: 'p99', color: lat[1].color, value: last ? fmt.dur(last.ops[op].p99) : '—' }
+    ]);
+
+  // кэш
+  const cache = [
+    { name: 'попадания', color: col('--get'), values: h.map(p => p.cacheHits) },
+    { name: 'промахи', color: col('--bad'), values: h.map(p => p.cacheMisses) }
+  ];
+  drawChart('c-cache', { series: cache, xs, log: false, format: v => fmt.count(v) });
+  legend('lg-cache', [
+    { name: 'попадания', color: cache[0].color, value: fmt.rate(last ? last.cacheHits : 0) },
+    { name: 'промахи', color: cache[1].color, value: fmt.rate(last ? last.cacheMisses : 0) },
+    { name: 'занято', color: col('--muted'), value: fmt.bytes(s.cache.usedBytes) + ' из ' + fmt.bytes(s.cache.capacity) + ' (' + fmt.int(s.cache.blocks) + ' блоков)' }
+  ]);
+
+  // рост данных и память
+  drawChart('c-rows', { series: [{ name: 'строк', color: col('--insert'), values: h.map(p => p.rows) }], xs, log: false, format: fmt.count });
+  legend('lg-rows', [{ name: 'сейчас', color: col('--insert'), value: last ? fmt.int(last.rows) : '—' }]);
+  drawChart('c-disk', { series: [{ name: 'на диске', color: col('--flush'), values: h.map(p => p.diskBytes) }], xs, log: false, format: fmt.bytes });
+  legend('lg-disk', [{ name: 'сейчас', color: col('--flush'), value: last ? fmt.bytes(last.diskBytes) : '—' }]);
+  drawChart('c-heap', { series: [{ name: 'куча', color: col('--heap'), values: h.map(p => p.heap) }], xs, log: false, format: fmt.bytes });
+  legend('lg-heap', [{ name: 'занято', color: col('--heap'), value: fmt.bytes(heap) }, { name: 'максимум', color: col('--muted'), value: fmt.bytes(s.jvm.heapMax) }]);
+
+  renderTables(tables);
+  renderOps(s, last);
+}
+
+function renderTables(tables) {
+  if (!tables.length) { $('tables-body').innerHTML = '<div class="note">Таблиц пока нет.</div>'; return; }
+  $('tables-body').innerHTML = tables.map(t => {
+    const disk = t.columns.reduce((a, c) => a + c.diskBytes, 0), raw = t.columns.reduce((a, c) => a + c.rawBytes, 0);
+    const max = Math.max(1, ...t.columns.map(c => Math.max(c.rawBytes, c.diskBytes)));
+    const perRow = t.rows > 0 ? (disk / t.rows).toFixed(1) + ' Б/строку' : '';
+    const rowsText = t.rows < 0 ? 'строки не считались (таблицу ещё не открывали)' : fmt.int(t.rows) + ' строк';
+    const head = '<div class="table-title"><strong>' + t.name + '</strong><span>' + rowsText + '</span><span>' +
+      fmt.bytes(disk) + ' на диске</span><span>' + (disk ? 'сжатие ×' + (raw / disk).toFixed(2) : '') + '</span><span>' + perRow + '</span></div>';
+    const rows = t.columns.map(c =>
+      '<div class="col"><div class="name">' + c.name + '<small>' + c.type + '</small></div>' +
+      '<div class="bar"><div class="raw" style="width:' + (c.rawBytes / max * 100) + '%"></div><div class="disk" style="width:' + (c.diskBytes / max * 100) + '%"></div></div>' +
+      '<div class="size"><b>' + fmt.bytes(c.diskBytes) + '</b> из ' + fmt.bytes(c.rawBytes) + (c.diskBytes ? ' · ×' + (c.rawBytes / c.diskBytes).toFixed(2) : '') + '</div></div>').join('');
+    return head + rows;
+  }).join('');
+}
+
+function renderOps(s, last) {
+  const head = '<tr><th>операция</th><th>вызовов</th><th>строк</th><th>средняя задержка</th><th>сейчас</th><th>p50</th><th>p99</th></tr>';
+  const rows = OPS.map(op => {
+    const t = s.totals[op], cur = last ? last.ops[op] : null;
+    const avg = t.calls ? t.totalNanos / t.calls : 0;
+    return '<tr><td><span class="chip" style="background:' + css(OP_COLOR[op]) + '"></span>' + op.toLowerCase() + '</td><td>' + fmt.int(t.calls) + '</td><td>' + fmt.int(t.rows) +
+      '</td><td>' + fmt.dur(avg) + '</td><td>' + (cur ? fmt.rate(cur.rate) : '—') + '</td><td>' + (cur ? fmt.dur(cur.p50) : '—') + '</td><td>' + (cur ? fmt.dur(cur.p99) : '—') + '</td></tr>';
+  }).join('');
+  $('ops').innerHTML = head + rows;
+}
+
+// ---------- обмен с сервером ----------
+
+function setStatus(kind, label) {
+  const el = $('status');
+  el.className = 'status ' + kind;
+  el.lastElementChild.textContent = label;
+}
+
+async function poll() {
+  try {
+    const response = await fetch('/api/state?since=' + since, { cache: 'no-store' });
+    const s = await response.json();
+    if (startedAt !== null && s.startedAt !== startedAt) { history = []; since = 0; }
+    startedAt = s.startedAt;
+    for (const sample of s.history) { history.push(sample); since = Math.max(since, sample.t); }
+    if (history.length > 600) history.splice(0, history.length - 600);
+    latest = s;
+    lastOk = Date.now();
+    setStatus('live', 'онлайн');
+    render();
+  } catch (e) {
+    setStatus('off', 'нет связи');
+  }
+  setTimeout(poll, 1000);
+}
+
+function buildOpButtons() {
+  const seg = $('op-seg');
+  seg.innerHTML = ['INSERT', 'GET', 'FILTER', 'SORT', 'AGGREGATE', 'FLUSH'].map(op =>
+    '<button data-op="' + op + '"' + (op === latencyOp ? ' class="active"' : '') + '>' + op.toLowerCase() + '</button>').join('');
+  seg.addEventListener('click', e => {
+    const op = e.target.dataset && e.target.dataset.op;
+    if (!op) return;
+    latencyOp = op;
+    seg.querySelectorAll('button').forEach(b => b.classList.toggle('active', b.dataset.op === op));
+    render();
+  });
+}
+
+['c-throughput', 'c-latency', 'c-cache', 'c-rows', 'c-disk', 'c-heap'].forEach(attachHover);
+$('log-throughput').addEventListener('change', render);
+window.addEventListener('resize', render);
+buildOpButtons();
+setInterval(() => { if (lastOk && Date.now() - lastOk > 4000) setStatus('off', 'нет связи'); }, 1000);
+poll();
+</script>
+</body>
+</html>
