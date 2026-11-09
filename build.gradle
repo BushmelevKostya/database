@@ -1,5 +1,6 @@
 plugins {
     id 'org.jetbrains.kotlin.jvm' version '2.4.10'
+    id 'application'
 }
 
 group = 'org.itmo'
@@ -15,6 +16,38 @@ dependencies {
 
 kotlin {
     jvmToolchain(21)
+}
+
+application {
+    mainClass = 'org.itmo.MainKt'
+}
+
+tasks.register('inspect', JavaExec) {
+    group = 'application'
+    description = 'Показывает содержимое каталога данных: схему, значения колонок, размеры файлов'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'org.itmo.InspectKt'
+}
+
+tasks.register('benchmark', JavaExec) {
+    group = 'application'
+    description = 'Нагрузочный тест: скорость записи и чтения, эффективность хранения'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'org.itmo.BenchmarkKt'
+}
+
+tasks.register('load', JavaExec) {
+    group = 'application'
+    description = 'Долгий нагрузочный тест с живым дашбордом на http://localhost:8765'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'org.itmo.LoadTestKt'
+}
+
+tasks.register('importcsv', JavaExec) {
+    group = 'application'
+    description = 'Загрузка CSV/TSV в таблицу: importcsv --args="<файл> [параметры]"'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'org.itmo.ImportCsvKt'
 }
 
 test {
